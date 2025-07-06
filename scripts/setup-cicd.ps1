@@ -17,7 +17,7 @@ function Write-ColorOutput {
         [string]$Message,
         [string]$Color = "White"
     )
-    
+
     switch ($Color) {
         "Green" { Write-Host $Message -ForegroundColor Green }
         "Red" { Write-Host $Message -ForegroundColor Red }
@@ -51,9 +51,9 @@ function Write-Error {
 # Check prerequisites
 function Test-Prerequisites {
     Write-Step "Checking prerequisites..."
-    
+
     $missing = @()
-    
+
     # Check Azure CLI
     try {
         $azVersion = az --version 2>$null
@@ -65,7 +65,7 @@ function Test-Prerequisites {
     } catch {
         $missing += "Azure CLI"
     }
-    
+
     # Check GitHub CLI
     try {
         $ghVersion = gh --version 2>$null
@@ -77,7 +77,7 @@ function Test-Prerequisites {
     } catch {
         $missing += "GitHub CLI"
     }
-    
+
     # Check Node.js
     try {
         $nodeVersion = node --version 2>$null
@@ -89,7 +89,7 @@ function Test-Prerequisites {
     } catch {
         $missing += "Node.js"
     }
-    
+
     # Check Python
     try {
         $pythonVersion = python --version 2>$null
@@ -101,7 +101,7 @@ function Test-Prerequisites {
     } catch {
         $missing += "Python"
     }
-    
+
     # Check Docker
     try {
         $dockerVersion = docker --version 2>$null
@@ -113,13 +113,13 @@ function Test-Prerequisites {
     } catch {
         $missing += "Docker"
     }
-    
+
     if ($missing.Count -gt 0) {
         Write-Error "Missing prerequisites: $($missing -join ', ')"
         Write-ColorOutput "Please install the missing tools and run this script again." "Yellow"
         exit 1
     }
-    
+
     Write-Success "All prerequisites are met"
 }
 
@@ -129,48 +129,48 @@ function Setup-AzureResources {
         Write-Warning "Skipping Azure setup as requested"
         return
     }
-    
+
     Write-Step "Setting up Azure resources..."
-    
+
     # Login to Azure
     Write-ColorOutput "Logging into Azure..." "Cyan"
     az login
-    
+
     if ($AzureSubscriptionId) {
         az account set --subscription $AzureSubscriptionId
         Write-Success "Set subscription to $AzureSubscriptionId"
     }
-    
+
     # Create service principal for GitHub Actions
     Write-ColorOutput "Creating service principal for GitHub Actions..." "Cyan"
-    
+
     $spName = "github-actions-wix-platform-$(Get-Random)"
-    
+
     # Get the current subscription ID
     $subscriptionId = (az account show --query id --output tsv)
-    
+
     $spJson = az ad sp create-for-rbac --name $spName --role Contributor --scopes "/subscriptions/$subscriptionId" --sdk-auth | ConvertFrom-Json
-    
+
     if ($LASTEXITCODE -eq 0) {
         Write-Success "Service principal created: $spName"
-        
+
         # Store credentials for later use
         $Global:AzureCredentials = @{
-            ClientId = $spJson.clientId
-            ClientSecret = $spJson.clientSecret
-            TenantId = $spJson.tenantId
+            ClientId       = $spJson.clientId
+            ClientSecret   = $spJson.clientSecret
+            TenantId       = $spJson.tenantId
             SubscriptionId = $spJson.subscriptionId
         }
-        
+
         # Grant additional permissions
         Write-ColorOutput "Granting additional permissions..." "Cyan"
-        
+
         # Key Vault permissions
         az role assignment create --assignee $spJson.clientId --role "Key Vault Secrets User" --scope "/subscriptions/$subscriptionId"
-        
+
         # Container Registry permissions
         az role assignment create --assignee $spJson.clientId --role "AcrPush" --scope "/subscriptions/$subscriptionId"
-        
+
         Write-Success "Additional permissions granted"
     } else {
         Write-Error "Failed to create service principal"
@@ -184,9 +184,9 @@ function Setup-GitHubRepository {
         Write-Warning "Skipping GitHub setup as requested"
         return
     }
-    
+
     Write-Step "Setting up GitHub repository..."
-    
+
     # Authenticate with GitHub
     if ($GitHubToken) {
         $env:GH_TOKEN = $GitHubToken
@@ -194,54 +194,54 @@ function Setup-GitHubRepository {
         Write-ColorOutput "Authenticating with GitHub..." "Cyan"
         gh auth login
     }
-    
+
     # Check if we're in a GitHub repository
     $repoInfo = gh repo view --json nameWithOwner 2>$null | ConvertFrom-Json
-    
+
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Not in a GitHub repository or not authenticated"
         exit 1
     }
-    
+
     $repoName = $repoInfo.nameWithOwner
     Write-Success "Working with repository: $repoName"
-    
+
     # Set up repository secrets
     Setup-GitHubSecrets
-    
+
     # Enable GitHub features
     Write-ColorOutput "Enabling GitHub features..." "Cyan"
-    
+
     # Enable vulnerability alerts
     gh api repos/$repoName/vulnerability-alerts -X PUT
-    
+
     # Enable dependency alerts
     gh api repos/$repoName/automated-security-fixes -X PUT
-    
+
     Write-Success "GitHub features enabled"
 }
 
 # Setup GitHub secrets
 function Setup-GitHubSecrets {
     Write-ColorOutput "Setting up GitHub secrets..." "Cyan"
-    
+
     if ($Global:AzureCredentials) {
         # Set Azure credentials
         gh secret set AZURE_CLIENT_ID --body $Global:AzureCredentials.ClientId
         gh secret set AZURE_CLIENT_SECRET --body $Global:AzureCredentials.ClientSecret
         gh secret set AZURE_TENANT_ID --body $Global:AzureCredentials.TenantId
         gh secret set AZURE_SUBSCRIPTION_ID --body $Global:AzureCredentials.SubscriptionId
-        
+
         Write-Success "Azure credentials set as GitHub secrets"
     }
-    
+
     # Prompt for other required secrets
     $requiredSecrets = @(
         @{ Name = "OPENAI_API_KEY"; Description = "OpenAI API key for AI code review" },
         @{ Name = "SNYK_TOKEN"; Description = "Snyk authentication token" },
         @{ Name = "SONAR_TOKEN"; Description = "SonarCloud authentication token" }
     )
-    
+
     foreach ($secret in $requiredSecrets) {
         $value = Read-Host "Enter $($secret.Description) (leave empty to skip)"
         if ($value) {
@@ -251,14 +251,14 @@ function Setup-GitHubSecrets {
             Write-Warning "Skipped secret: $($secret.Name)"
         }
     }
-    
+
     # Optional secrets
     $optionalSecrets = @(
         @{ Name = "SLACK_WEBHOOK_URL"; Description = "Slack webhook URL for notifications" },
         @{ Name = "CODECOV_TOKEN"; Description = "Codecov authentication token" },
         @{ Name = "SEMGREP_APP_TOKEN"; Description = "Semgrep app token" }
     )
-    
+
     foreach ($secret in $optionalSecrets) {
         $value = Read-Host "Enter $($secret.Description) (optional)"
         if ($value) {
@@ -271,7 +271,7 @@ function Setup-GitHubSecrets {
 # Setup pre-commit hooks
 function Setup-PreCommitHooks {
     Write-Step "Setting up pre-commit hooks..."
-    
+
     # Install pre-commit if not already installed
     try {
         pre-commit --version 2>$null
@@ -280,14 +280,14 @@ function Setup-PreCommitHooks {
         Write-ColorOutput "Installing pre-commit..." "Cyan"
         pip install pre-commit
     }
-    
+
     # Install hooks
     if (Test-Path ".pre-commit-config.yaml") {
         Write-ColorOutput "Installing pre-commit hooks..." "Cyan"
         pre-commit install
         pre-commit install --hook-type commit-msg
         Write-Success "Pre-commit hooks installed"
-        
+
         # Run initial check
         Write-ColorOutput "Running initial pre-commit check..." "Cyan"
         pre-commit run --all-files
@@ -299,18 +299,18 @@ function Setup-PreCommitHooks {
 # Setup development environment
 function Setup-DevelopmentEnvironment {
     Write-Step "Setting up development environment..."
-    
+
     # Install npm dependencies
     if (Test-Path "package.json") {
         Write-ColorOutput "Installing npm dependencies..." "Cyan"
         npm install
         Write-Success "npm dependencies installed"
     }
-    
+
     # Install package dependencies
     if (Test-Path "packages") {
         Write-ColorOutput "Installing package dependencies..." "Cyan"
-        
+
         $packages = Get-ChildItem -Path "packages" -Directory
         foreach ($package in $packages) {
             $packageJsonPath = Join-Path $package.FullName "package.json"
@@ -321,21 +321,21 @@ function Setup-DevelopmentEnvironment {
                 Pop-Location
             }
         }
-        
+
         Write-Success "All package dependencies installed"
     }
-    
+
     # Setup Python virtual environment for microservices
     $microservicesPath = "packages\microservices"
     if (Test-Path $microservicesPath) {
         Write-ColorOutput "Setting up Python virtual environment..." "Cyan"
         Push-Location $microservicesPath
-        
+
         python -m venv venv
         .\venv\Scripts\Activate.ps1
         pip install -r requirements.txt
         pip install pytest pytest-cov flake8 black mypy bandit
-        
+
         Pop-Location
         Write-Success "Python environment setup completed"
     }
@@ -344,9 +344,9 @@ function Setup-DevelopmentEnvironment {
 # Validate setup
 function Test-Setup {
     Write-Step "Validating setup..."
-    
+
     $issues = @()
-    
+
     # Check if workflows exist
     $workflowsPath = ".github\workflows"
     if (Test-Path $workflowsPath) {
@@ -359,13 +359,13 @@ function Test-Setup {
     } else {
         $issues += "GitHub workflows directory not found"
     }
-    
+
     # Check if secrets are configured
     try {
         $secrets = gh secret list --json name | ConvertFrom-Json
         $requiredSecrets = @("AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID")
         $missingSecrets = $requiredSecrets | Where-Object { $_.name -notin $secrets.name }
-        
+
         if ($missingSecrets.Count -eq 0) {
             Write-Success "All required secrets are configured"
         } else {
@@ -374,7 +374,7 @@ function Test-Setup {
     } catch {
         $issues += "Could not verify GitHub secrets"
     }
-    
+
     # Check if Azure CLI is authenticated
     try {
         $account = az account show | ConvertFrom-Json
@@ -382,7 +382,7 @@ function Test-Setup {
     } catch {
         $issues += "Azure CLI is not authenticated"
     }
-    
+
     if ($issues.Count -gt 0) {
         Write-Warning "Setup validation found issues:"
         foreach ($issue in $issues) {
@@ -396,7 +396,7 @@ function Test-Setup {
 # Generate summary report
 function Write-SetupSummary {
     Write-Step "Setup Summary"
-    
+
     Write-ColorOutput @"
 
 🚀 AI-Powered CI/CD Setup Complete!
@@ -467,25 +467,25 @@ This script will set up a comprehensive AI-powered CI/CD pipeline including:
 - Development environment configuration
 
 "@ "Cyan"
-    
+
     try {
         Test-Prerequisites
-        
+
         if (-not $SkipAzureSetup) {
             Setup-AzureResources
         }
-        
+
         if (-not $SkipGitHubSetup) {
             Setup-GitHubRepository
         }
-        
+
         Setup-PreCommitHooks
         Setup-DevelopmentEnvironment
         Test-Setup
         Write-SetupSummary
-        
+
         Write-Success "Setup completed successfully!"
-        
+
     } catch {
         Write-Error "Setup failed: $($_.Exception.Message)"
         Write-ColorOutput "Please check the error above and try again." "Yellow"

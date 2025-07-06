@@ -38,12 +38,12 @@ if ($continue -ne "y" -and $continue -ne "Y") {
 # Helper function to set secrets
 function Set-Secret {
     param([string]$Name, [string]$Value)
-    
+
     if ([string]::IsNullOrWhiteSpace($Value)) {
         Write-Host "⚠️  Skipping $Name (no value)" -ForegroundColor Yellow
         return
     }
-    
+
     Write-Host "Setting $Name..." -ForegroundColor Yellow
     try {
         $Value | gh secret set $Name --repo $Repository

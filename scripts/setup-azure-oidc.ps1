@@ -17,7 +17,7 @@
 param(
     [Parameter(Mandatory=$true)]
     [string]$RepoName,
-    
+
     [Parameter(Mandatory=$false)]
     [string]$AppName = "wix-studio-github-oidc"
 )
@@ -144,9 +144,9 @@ function New-FederatedCredential {
         [string]$Subject,
         [string]$Description
     )
-    
+
     Write-Host "Creating federated credential: $Name" -ForegroundColor Yellow
-    
+
     $credentialJson = @{
         name = $Name
         issuer = "https://token.actions.githubusercontent.com"
@@ -154,7 +154,7 @@ function New-FederatedCredential {
         audiences = @("api://AzureADTokenExchange")
         description = $Description
     } | ConvertTo-Json -Depth 3
-    
+
     try {
         # Check if credential already exists
         $existing = az ad app federated-credential list --id $appId --query "[?name=='$Name'].name" -o tsv 2>$null
@@ -162,7 +162,7 @@ function New-FederatedCredential {
             Write-Host "⚠️  Federated credential '$Name' already exists" -ForegroundColor Yellow
             return
         }
-        
+
         $result = az ad app federated-credential create --id $appId --parameters $credentialJson --output none
         if ($LASTEXITCODE -eq 0) {
             Write-Host "✅ Created federated credential: $Name" -ForegroundColor Green
@@ -245,7 +245,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Azure Login (OIDC)
         uses: azure/login@v1
         with:

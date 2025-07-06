@@ -1,15 +1,16 @@
-name: 🤖 AI Code Review & Quality Gate
+name: 🤖 AI Code Review (PR Only)
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    branches: [main, develop]
+    branches: [main, develop, staging]
 
 permissions:
   contents: read
   pull-requests: write
   checks: write
   security-events: write
+  issues: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}

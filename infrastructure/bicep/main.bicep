@@ -155,19 +155,23 @@ resource microservicesContainer 'Microsoft.App/containerApps@2023-05-01' = {
           allowedHeaders: ['*']
         }
       }
-      registries: !empty(githubToken) ? [
-        {
-          server: 'ghcr.io'
-          username: 'diatonic-ai'
-          passwordSecretRef: 'github-registry-password'
-        }
-      ] : []
-      secrets: !empty(githubToken) ? [
-        {
-          name: 'github-registry-password'
-          value: githubToken
-        }
-      ] : []
+      registries: !empty(githubToken)
+        ? [
+            {
+              server: 'ghcr.io'
+              username: 'diatonic-ai'
+              passwordSecretRef: 'github-registry-password'
+            }
+          ]
+        : []
+      secrets: !empty(githubToken)
+        ? [
+            {
+              name: 'github-registry-password'
+              value: githubToken
+            }
+          ]
+        : []
     }
     template: {
       containers: [

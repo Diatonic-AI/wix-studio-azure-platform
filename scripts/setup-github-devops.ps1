@@ -16,7 +16,7 @@
 param(
     [Parameter(Mandatory=$false)]
     [string]$RepoName = "Diatonic-AI/wix-studio-azure-platform",
-    
+
     [Parameter(Mandatory=$false)]
     [string]$Environment = "production"
 )
@@ -87,7 +87,7 @@ Write-Host "=== STEP 2: ADDITIONAL GITHUB SECRETS ===" -ForegroundColor Magenta
 
 function Set-GitHubSecret {
     param([string]$Name, [string]$Value, [string]$Description)
-    
+
     if (![string]::IsNullOrWhiteSpace($Value)) {
         try {
             Write-Output $Value | gh secret set $Name --repo $RepoName

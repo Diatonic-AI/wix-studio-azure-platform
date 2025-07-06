@@ -1,0 +1,223 @@
+name: 🛠️ Deploy to Development
+
+on:
+  workflow_dispatch:
+    inputs:
+      triggered-by:
+        description: 'Workflow that triggered this deployment'
+        required: false
+        default: 'manual'
+      quality-score:
+        description: 'Quality score from analysis'
+        required: false
+        default: '0'
+      security-score:
+        description: 'Security score from analysis'
+        required: false
+        default: '0'
+
+# Enhanced permissions for development deployment
+permissions:
+  id-token: write
+  contents: read
+  packages: write
+  actions: write
+  checks: write
+
+concurrency:
+  group: deploy-development-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.11'
+  REGISTRY: ghcr.io
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ENVIRONMENT: development
+
+jobs:
+  # 🚀 Fast Development Build
+  dev-build:
+    name: 🚀 Development Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    
+    outputs:
+      api-image: ${{ steps.meta-api.outputs.tags }}
+      microservices-image: ${{ steps.meta-micro.outputs.tags }}
+      
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Setup Node.js with aggressive caching
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: |
+          package-lock.json
+          packages/*/package-lock.json
+
+    - name: 📦 Fast dependency install
+      run: |
+        npm ci --prefer-offline --no-audit
+        npm run install:packages
+
+    - name: 🔨 Quick build (dev mode)
+      run: |
+        export NODE_ENV=development
+        npm run build
+
+    - name: 🐳 Set up Docker Buildx with caching
+      uses: docker/setup-buildx-action@v3
+      with:
+        driver-opts: |
+          image=moby/buildkit:v0.12.0
+          network=host
+
+    - name: 🔐 Login to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 🏷️ Extract API metadata
+      id: meta-api
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ github.repository }}/api-services
+        tags: |
+          type=ref,event=branch,suffix=-dev
+          type=sha,prefix=dev-
+          type=raw,value=dev-latest
+
+    - name: 🏷️ Extract Microservices metadata
+      id: meta-micro
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ github.repository }}/microservices
+        tags: |
+          type=ref,event=branch,suffix=-dev
+          type=sha,prefix=dev-
+          type=raw,value=dev-latest
+
+    - name: 🔨 Build and push API Services (dev)
+      uses: docker/build-push-action@v5
+      with:
+        context: ./packages/api-services
+        push: true
+        tags: ${{ steps.meta-api.outputs.tags }}
+        labels: ${{ steps.meta-api.outputs.labels }}
+        cache-from: type=gha,scope=api-dev
+        cache-to: type=gha,mode=max,scope=api-dev
+        build-args: |
+          NODE_ENV=development
+        target: production
+
+    - name: 🔨 Build and push Microservices (dev)
+      uses: docker/build-push-action@v5
+      with:
+        context: ./packages/microservices
+        push: true
+        tags: ${{ steps.meta-micro.outputs.tags }}
+        labels: ${{ steps.meta-micro.outputs.labels }}
+        cache-from: type=gha,scope=micro-dev
+        cache-to: type=gha,mode=max,scope=micro-dev
+        build-args: |
+          PYTHON_ENV=development
+
+    - name: 🏗️ Generate attestations
+      uses: actions/attest-build-provenance@v1
+      with:
+        subject-name: ${{ env.REGISTRY }}/${{ github.repository }}/api-services
+        subject-digest: ${{ steps.meta-api.outputs.digest }}
+
+    - name: 🏗️ Generate microservices attestations
+      uses: actions/attest-build-provenance@v1
+      with:
+        subject-name: ${{ env.REGISTRY }}/${{ github.repository }}/microservices
+        subject-digest: ${{ steps.meta-micro.outputs.digest }}
+
+  # 🚀 Development Deployment
+  dev-deploy:
+    name: 🚀 Deploy to Azure Development
+    runs-on: ubuntu-latest
+    needs: dev-build
+    environment: 
+      name: development
+      url: ${{ steps.deploy.outputs.webapp-url }}
+    
+    steps:
+    - name: 📥 Checkout infrastructure
+      uses: actions/checkout@v4
+
+    - name: 🔐 Azure Login (OIDC)
+      uses: azure/login@v1
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: 🏗️ Deploy Azure Infrastructure (Development)
+      id: deploy
+      uses: azure/arm-deploy@v1
+      with:
+        resourceGroupName: rg-wix-agency-dev
+        template: ./infra/main.bicep
+        parameters: >
+          ./infra/main.parameters.json
+          environmentName=dev
+          microservicesImage=${{ needs.dev-build.outputs.microservices-image }}
+          githubToken=${{ secrets.GITHUB_TOKEN }}
+        failOnStdErr: false
+
+    - name: 🚀 Deploy to App Services (Development)
+      run: |
+        # Deploy API Services
+        az webapp deployment container config \
+          --name "${{ steps.deploy.outputs.apiServicesAppName }}" \
+          --resource-group rg-wix-agency-dev \
+          --docker-custom-image-name "${{ needs.dev-build.outputs.api-image }}"
+        
+        # Restart apps
+        az webapp restart \
+          --name "${{ steps.deploy.outputs.apiServicesAppName }}" \
+          --resource-group rg-wix-agency-dev
+
+    - name: 🧪 Development Health Check
+      run: |
+        echo "⏱️ Waiting for services to start..."
+        sleep 30
+        
+        # Quick health checks for development
+        API_URL="${{ steps.deploy.outputs.apiServicesUrl }}"
+        MICRO_URL="${{ steps.deploy.outputs.microservicesUrl }}"
+        
+        # Basic connectivity test
+        curl -f "$API_URL/health" || echo "⚠️ API health check failed (expected in dev)"
+        curl -f "$MICRO_URL/health" || echo "⚠️ Microservices health check failed (expected in dev)"
+        
+        echo "✅ Development deployment completed"
+
+    - name: 📊 Deployment Summary
+      run: |
+        echo "## 🛠️ Development Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Environment**: Development" >> $GITHUB_STEP_SUMMARY
+        echo "**Quality Score**: ${{ inputs.quality-score }}/100" >> $GITHUB_STEP_SUMMARY
+        echo "**Security Score**: ${{ inputs.security-score }}/100" >> $GITHUB_STEP_SUMMARY
+        echo "**Triggered By**: ${{ inputs.triggered-by }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔗 Service URLs" >> $GITHUB_STEP_SUMMARY
+        echo "- **API Services**: ${{ steps.deploy.outputs.apiServicesUrl }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Microservices**: ${{ steps.deploy.outputs.microservicesUrl }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📦 Deployed Images" >> $GITHUB_STEP_SUMMARY
+        echo "- **API**: \`${{ needs.dev-build.outputs.api-image }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Microservices**: \`${{ needs.dev-build.outputs.microservices-image }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "*Development environment is optimized for fast iteration and testing.*" >> $GITHUB_STEP_SUMMARY

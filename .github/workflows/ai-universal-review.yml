@@ -1,0 +1,573 @@
+name: 🤖 Universal AI Code Review
+
+on:
+  push:
+    branches: [ main, develop, staging, feature/* ]
+  pull_request:
+    branches: [ main, develop, staging ]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+# Enhanced permissions for comprehensive operations
+permissions:
+  id-token: write
+  contents: read
+  packages: write
+  pull-requests: write
+  security-events: write
+  checks: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # 🔍 Universal Code Quality Analysis
+  universal-analysis:
+    name: 🔍 Universal Analysis
+    runs-on: ubuntu-latest
+    
+    outputs:
+      quality-score: ${{ steps.quality.outputs.score }}
+      security-score: ${{ steps.security.outputs.score }}
+      deployment-target: ${{ steps.deployment.outputs.target }}
+      should-deploy: ${{ steps.deployment.outputs.should-deploy }}
+      
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 🔧 Setup Node.js with caching
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: |
+          package-lock.json
+          packages/*/package-lock.json
+
+    - name: 🐍 Setup Python with caching
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+        cache-dependency-path: |
+          packages/microservices/requirements.txt
+
+    - name: 📦 Install dependencies with caching
+      run: |
+        # Cache npm dependencies
+        npm ci --prefer-offline --no-audit
+        npm run install:packages
+        
+        # Cache Python dependencies  
+        cd packages/microservices
+        pip install -r requirements.txt
+        
+    - name: 🎯 Detect deployment target from commit message
+      id: deployment
+      run: |
+        COMMIT_MSG="${{ github.event.head_commit.message || github.event.pull_request.title }}"
+        echo "Commit message: $COMMIT_MSG"
+        
+        # Check for deployment flags
+        if echo "$COMMIT_MSG" | grep -q "\[prod\]"; then
+          echo "target=production" >> $GITHUB_OUTPUT
+          echo "should-deploy=true" >> $GITHUB_OUTPUT
+          echo "🚀 **Production deployment detected**" >> $GITHUB_STEP_SUMMARY
+        elif echo "$COMMIT_MSG" | grep -q "\[staging\]"; then
+          echo "target=staging" >> $GITHUB_OUTPUT
+          echo "should-deploy=true" >> $GITHUB_OUTPUT
+          echo "🔄 **Staging deployment detected**" >> $GITHUB_STEP_SUMMARY
+        elif echo "$COMMIT_MSG" | grep -q "\[dev\]"; then
+          echo "target=development" >> $GITHUB_OUTPUT
+          echo "should-deploy=true" >> $GITHUB_OUTPUT
+          echo "🛠️ **Development deployment detected**" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "target=none" >> $GITHUB_OUTPUT
+          echo "should-deploy=false" >> $GITHUB_OUTPUT
+          echo "📝 **Code review only - no deployment**" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: 📏 Advanced code metrics
+      id: metrics
+      run: |
+        # Enhanced metrics collection
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+        else
+          BASE_SHA="${{ github.event.before }}"
+        fi
+        
+        # Calculate comprehensive metrics
+        LINES_CHANGED=$(git diff --numstat $BASE_SHA..HEAD | awk '{sum += $1 + $2} END {print sum+0}')
+        FILES_CHANGED=$(git diff --name-only $BASE_SHA..HEAD | wc -l)
+        TS_FILES_CHANGED=$(git diff --name-only $BASE_SHA..HEAD | grep -E '\.(ts|tsx)$' | wc -l)
+        PY_FILES_CHANGED=$(git diff --name-only $BASE_SHA..HEAD | grep -E '\.py$' | wc -l)
+        
+        echo "lines-changed=$LINES_CHANGED" >> $GITHUB_OUTPUT
+        echo "files-changed=$FILES_CHANGED" >> $GITHUB_OUTPUT
+        echo "ts-files-changed=$TS_FILES_CHANGED" >> $GITHUB_OUTPUT
+        echo "py-files-changed=$PY_FILES_CHANGED" >> $GITHUB_OUTPUT
+        
+        echo "📊 **Code Metrics:**" >> $GITHUB_STEP_SUMMARY
+        echo "- Lines changed: $LINES_CHANGED" >> $GITHUB_STEP_SUMMARY
+        echo "- Files changed: $FILES_CHANGED" >> $GITHUB_STEP_SUMMARY
+        echo "- TypeScript files: $TS_FILES_CHANGED" >> $GITHUB_STEP_SUMMARY
+        echo "- Python files: $PY_FILES_CHANGED" >> $GITHUB_STEP_SUMMARY
+
+    - name: 🧹 Enhanced ESLint analysis
+      id: eslint
+      run: |
+        npm run lint -- --format json --output-file eslint-results.json || true
+        
+        # Enhanced error analysis
+        if [ -f eslint-results.json ]; then
+          ERRORS=$(jq '[.[].messages[] | select(.severity == 2)] | length' eslint-results.json || echo "0")
+          WARNINGS=$(jq '[.[].messages[] | select(.severity == 1)] | length' eslint-results.json || echo "0")
+          FIXABLE=$(jq '[.[].messages[] | select(.fix != null)] | length' eslint-results.json || echo "0")
+          
+          # Create detailed error report
+          jq -r '.[] | .filePath as $file | .messages[] | select(.severity == 2) | "ERROR: \($file):\(.line):\(.column) - \(.message)"' eslint-results.json > eslint-errors.txt || true
+          
+          echo "errors=$ERRORS" >> $GITHUB_OUTPUT
+          echo "warnings=$WARNINGS" >> $GITHUB_OUTPUT
+          echo "fixable=$FIXABLE" >> $GITHUB_OUTPUT
+          
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "🚨 **ESLint Errors Found: $ERRORS**" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            head -10 eslint-errors.txt >> $GITHUB_STEP_SUMMARY || true
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
+        else
+          echo "errors=0" >> $GITHUB_OUTPUT
+          echo "warnings=0" >> $GITHUB_OUTPUT
+          echo "fixable=0" >> $GITHUB_OUTPUT
+        fi
+
+    - name: 🐍 Python quality analysis
+      id: python-quality
+      run: |
+        cd packages/microservices
+        
+        # Run flake8 with JSON output
+        python -m flake8 . --format=json --output-file=flake8-results.json --exit-zero || true
+        
+        # Analyze results
+        if [ -f flake8-results.json ]; then
+          PYTHON_ERRORS=$(jq 'length' flake8-results.json || echo "0")
+          echo "python-errors=$PYTHON_ERRORS" >> $GITHUB_OUTPUT
+        else
+          echo "python-errors=0" >> $GITHUB_OUTPUT
+        fi
+        
+        # Run additional quality checks
+        python -m flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        python -m flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    - name: 🔒 Comprehensive security scan
+      id: security
+      run: |
+        # Install security tools
+        python -m pip install semgrep bandit safety
+        
+        # Run Semgrep
+        semgrep --config=auto --json --output=semgrep-results.json . || true
+        
+        # Run Bandit for Python
+        cd packages/microservices
+        bandit -r . -f json -o bandit-results.json || true
+        cd ../..
+        
+        # Run npm audit
+        npm audit --audit-level=moderate --json > npm-audit.json || true
+        
+        # Analyze security results
+        SEMGREP_CRITICAL=$(jq '[.results[] | select(.extra.severity == "ERROR")] | length' semgrep-results.json 2>/dev/null || echo "0")
+        SEMGREP_HIGH=$(jq '[.results[] | select(.extra.severity == "WARNING")] | length' semgrep-results.json 2>/dev/null || echo "0")
+        BANDIT_HIGH=$(jq '[.results[] | select(.issue_severity == "HIGH")] | length' packages/microservices/bandit-results.json 2>/dev/null || echo "0")
+        NPM_VULNERABILITIES=$(jq '.metadata.vulnerabilities.total' npm-audit.json 2>/dev/null || echo "0")
+        
+        # Calculate security score
+        SECURITY_SCORE=100
+        SECURITY_SCORE=$((SECURITY_SCORE - SEMGREP_CRITICAL * 20))
+        SECURITY_SCORE=$((SECURITY_SCORE - SEMGREP_HIGH * 10))
+        SECURITY_SCORE=$((SECURITY_SCORE - BANDIT_HIGH * 15))
+        SECURITY_SCORE=$((SECURITY_SCORE - NPM_VULNERABILITIES * 5))
+        
+        if [ "$SECURITY_SCORE" -lt 0 ]; then
+          SECURITY_SCORE=0
+        fi
+        
+        echo "critical=$SEMGREP_CRITICAL" >> $GITHUB_OUTPUT
+        echo "high=$SEMGREP_HIGH" >> $GITHUB_OUTPUT
+        echo "bandit-high=$BANDIT_HIGH" >> $GITHUB_OUTPUT
+        echo "npm-vulns=$NPM_VULNERABILITIES" >> $GITHUB_OUTPUT
+        echo "score=$SECURITY_SCORE" >> $GITHUB_OUTPUT
+        
+        echo "🔒 **Security Analysis:**" >> $GITHUB_STEP_SUMMARY
+        echo "- Critical issues: $SEMGREP_CRITICAL" >> $GITHUB_STEP_SUMMARY
+        echo "- High severity: $SEMGREP_HIGH" >> $GITHUB_STEP_SUMMARY
+        echo "- Python security: $BANDIT_HIGH high risk" >> $GITHUB_STEP_SUMMARY
+        echo "- NPM vulnerabilities: $NPM_VULNERABILITIES" >> $GITHUB_STEP_SUMMARY
+        echo "- Security Score: $SECURITY_SCORE/100" >> $GITHUB_STEP_SUMMARY
+
+    - name: 🧪 Enhanced test coverage
+      id: coverage
+      run: |
+        # Run tests with coverage
+        npm run test:coverage || true
+        
+        # Python tests with coverage
+        cd packages/microservices
+        python -m pytest --cov=. --cov-report=json --cov-report=html || true
+        cd ../..
+        
+        # Extract coverage data
+        JS_COVERAGE=$(jq '.total.lines.pct' coverage/coverage-summary.json 2>/dev/null || echo "0")
+        PY_COVERAGE=$(jq '.totals.percent_covered' packages/microservices/coverage.json 2>/dev/null || echo "0")
+        
+        echo "js-coverage=$JS_COVERAGE" >> $GITHUB_OUTPUT
+        echo "py-coverage=$PY_COVERAGE" >> $GITHUB_OUTPUT
+        
+        echo "🧪 **Test Coverage:**" >> $GITHUB_STEP_SUMMARY
+        echo "- JavaScript/TypeScript: ${JS_COVERAGE}%" >> $GITHUB_STEP_SUMMARY
+        echo "- Python: ${PY_COVERAGE}%" >> $GITHUB_STEP_SUMMARY
+
+    - name: 📊 Calculate comprehensive quality score
+      id: quality
+      run: |
+        # Advanced quality scoring algorithm
+        SCORE=100
+        
+        # Deduct points for issues
+        SCORE=$((SCORE - ${{ steps.eslint.outputs.errors }} * 5))
+        SCORE=$((SCORE - ${{ steps.eslint.outputs.warnings }} * 1))
+        SCORE=$((SCORE - ${{ steps.python-quality.outputs.python-errors }} * 3))
+        SCORE=$((SCORE - ${{ steps.security.outputs.critical }} * 25))
+        SCORE=$((SCORE - ${{ steps.security.outputs.high }} * 15))
+        
+        # Coverage bonuses/penalties
+        JS_COV=${{ steps.coverage.outputs.js-coverage }}
+        PY_COV=${{ steps.coverage.outputs.py-coverage }}
+        
+        if (( $(echo "$JS_COV < 60" | bc -l) )); then
+          SCORE=$((SCORE - 10))
+        elif (( $(echo "$JS_COV > 80" | bc -l) )); then
+          SCORE=$((SCORE + 5))
+        fi
+        
+        # Bonus for small, focused changes
+        if [ "${{ steps.metrics.outputs.lines-changed }}" -lt 50 ]; then
+          SCORE=$((SCORE + 5))
+        elif [ "${{ steps.metrics.outputs.lines-changed }}" -gt 500 ]; then
+          SCORE=$((SCORE - 5))
+        fi
+        
+        # Ensure score bounds
+        if [ "$SCORE" -lt 0 ]; then
+          SCORE=0
+        elif [ "$SCORE" -gt 100 ]; then
+          SCORE=100
+        fi
+        
+        echo "score=$SCORE" >> $GITHUB_OUTPUT
+        echo "📊 **Final Quality Score: $SCORE/100**" >> $GITHUB_STEP_SUMMARY
+
+    - name: 📁 Upload analysis artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: code-analysis-results-${{ github.run_id }}
+        path: |
+          eslint-results.json
+          eslint-errors.txt
+          semgrep-results.json
+          packages/microservices/bandit-results.json
+          npm-audit.json
+          coverage/
+          packages/microservices/htmlcov/
+        retention-days: 30
+
+  # 🤖 AI-Powered Analysis and Issue Creation
+  ai-analysis:
+    name: 🤖 AI Analysis & Issue Creation
+    runs-on: ubuntu-latest
+    needs: universal-analysis
+    if: always()
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: 📁 Download analysis artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: code-analysis-results-${{ github.run_id }}
+        path: ./analysis-results
+
+    - name: 🤖 AI-powered code analysis
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          
+          // Get commit or PR information
+          let diffInfo = {};
+          if (context.eventName === 'pull_request') {
+            const diff = await github.rest.repos.compareCommits({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              base: context.payload.pull_request.base.sha,
+              head: context.payload.pull_request.head.sha
+            });
+            diffInfo = diff.data;
+          } else {
+            // For push events, get the diff from the last commit
+            const commits = await github.rest.repos.listCommits({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              per_page: 1
+            });
+            diffInfo = { files: [] }; // Simplified for push events
+          }
+          
+          // Read analysis results
+          let analysisData = {
+            quality_score: ${{ needs.universal-analysis.outputs.quality-score }},
+            security_score: ${{ needs.universal-analysis.outputs.security-score }},
+            deployment_target: '${{ needs.universal-analysis.outputs.deployment-target }}',
+            should_deploy: '${{ needs.universal-analysis.outputs.should-deploy }}'
+          };
+          
+          // Load detailed results if available
+          try {
+            if (fs.existsSync('./analysis-results/eslint-results.json')) {
+              analysisData.eslint = JSON.parse(fs.readFileSync('./analysis-results/eslint-results.json', 'utf8'));
+            }
+            if (fs.existsSync('./analysis-results/semgrep-results.json')) {
+              analysisData.semgrep = JSON.parse(fs.readFileSync('./analysis-results/semgrep-results.json', 'utf8'));
+            }
+          } catch (e) {
+            console.log('Note: Some analysis files not available:', e.message);
+          }
+          
+          // Generate comprehensive AI analysis
+          const qualityStatus = analysisData.quality_score >= 80 ? 'Excellent' : 
+                               analysisData.quality_score >= 60 ? 'Needs Improvement' : 'Critical Issues';
+          const securityStatus = analysisData.security_score >= 80 ? 'Secure' : 
+                                analysisData.security_score >= 60 ? 'Minor Issues' : 'Security Concerns';
+          const deployStatus = analysisData.should_deploy && analysisData.quality_score >= 70 ? 'Yes' : 'No';
+          
+          const analysisReport = [
+            '## 🤖 AI Code Analysis Report',
+            '',
+            `**Repository**: ${context.repo.owner}/${context.repo.repo}`,
+            `**Branch**: ${context.ref}`,
+            `**Commit**: ${context.sha}`,
+            `**Event**: ${context.eventName}`,
+            `**Quality Score**: ${analysisData.quality_score}/100`,
+            `**Security Score**: ${analysisData.security_score}/100`,
+            `**Deployment Target**: ${analysisData.deployment_target}`,
+            '',
+            '### 📊 Analysis Summary',
+            '',
+            `This automated analysis was performed on ${new Date().toISOString()} for the Wix Studio Agency platform.`,
+            '',
+            '### 🎯 Key Findings',
+            '',
+            `- **Code Quality**: ${qualityStatus}`,
+            `- **Security**: ${securityStatus}`,
+            `- **Deployment Ready**: ${deployStatus}`,
+            '',
+            '### � Recommendations',
+            '',
+            '- 📚 **Best Practices**: Ensure Azure cloud patterns are followed',
+            '- 🧪 **Testing**: Maintain test coverage above 80%',
+            '- � **Documentation**: Update relevant documentation',
+            '',
+            '### 🏷️ Commit Flags Guide',
+            '',
+            'Use these flags in your commit messages to trigger specific deployments:',
+            '- `[dev]` - Deploy to development environment',
+            '- `[staging]` - Deploy to staging environment',
+            '- `[prod]` - Deploy to production environment',
+            '',
+            '### 📈 Metrics Dashboard',
+            '',
+            `- Quality Score: ${analysisData.quality_score}/100`,
+            `- Security Score: ${analysisData.security_score}/100`,
+            `- Files Changed: ${diffInfo.files ? diffInfo.files.length : 'N/A'}`,
+            `- Deployment Ready: ${deployStatus}`,
+            '',
+            '*This analysis was generated automatically by the AI-powered CI/CD pipeline.*'
+          ].join('\\n');
+          
+          // Post analysis as comment on PR or create issue
+          if (context.eventName === 'pull_request') {
+            await github.rest.issues.createComment({
+              issue_number: context.payload.pull_request.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: analysisReport
+            });
+          } else {
+            // For push events, create an issue if quality is low
+            if (analysisData.quality_score < 70 || analysisData.security_score < 60) {
+              let issueTitle = '🚨 Code Quality Alert';
+              if (analysisData.deployment_target !== 'none') {
+                issueTitle += ` - ${analysisData.deployment_target.toUpperCase()} Deployment Concern`;
+              } else {
+                issueTitle += ' - Quality Issues Detected';
+              }
+              
+              const labels = ['code-quality'];
+              if (analysisData.quality_score < 50) labels.push('critical');
+              if (analysisData.quality_score >= 50) labels.push('needs-review');
+              if (analysisData.security_score < 60) labels.push('security');
+              if (analysisData.deployment_target !== 'none') labels.push('deployment');
+              
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: issueTitle,
+                body: analysisReport,
+                labels: labels
+              });
+            }
+          }
+
+  # 📋 Quality Gate Decision
+  quality-gate:
+    name: 📋 Quality Gate
+    runs-on: ubuntu-latest
+    needs: [universal-analysis, ai-analysis]
+    if: always()
+    
+    outputs:
+      deploy-approved: ${{ steps.decision.outputs.approved }}
+      deployment-target: ${{ needs.universal-analysis.outputs.deployment-target }}
+      
+    steps:
+    - name: 🎯 Quality gate decision
+      id: decision
+      run: |
+        QUALITY_SCORE=${{ needs.universal-analysis.outputs.quality-score }}
+        SECURITY_SCORE=${{ needs.universal-analysis.outputs.security-score }}
+        SHOULD_DEPLOY=${{ needs.universal-analysis.outputs.should-deploy }}
+        TARGET=${{ needs.universal-analysis.outputs.deployment-target }}
+        
+        echo "Quality Score: $QUALITY_SCORE"
+        echo "Security Score: $SECURITY_SCORE"
+        echo "Should Deploy: $SHOULD_DEPLOY"
+        echo "Target: $TARGET"
+        
+        # Quality gate logic
+        APPROVED="false"
+        
+        if [ "$SHOULD_DEPLOY" = "true" ]; then
+          if [ "$TARGET" = "production" ]; then
+            # Production requires higher standards
+            if [ "$QUALITY_SCORE" -ge 85 ] && [ "$SECURITY_SCORE" -ge 90 ]; then
+              APPROVED="true"
+            fi
+          elif [ "$TARGET" = "staging" ]; then
+            # Staging requires good standards
+            if [ "$QUALITY_SCORE" -ge 75 ] && [ "$SECURITY_SCORE" -ge 80 ]; then
+              APPROVED="true"
+            fi
+          elif [ "$TARGET" = "development" ]; then
+            # Development is more lenient but still requires basics
+            if [ "$QUALITY_SCORE" -ge 60 ] && [ "$SECURITY_SCORE" -ge 70 ]; then
+              APPROVED="true"
+            fi
+          fi
+        fi
+        
+        echo "approved=$APPROVED" >> $GITHUB_OUTPUT
+        
+        if [ "$APPROVED" = "true" ]; then
+          echo "✅ **Quality Gate: PASSED**" >> $GITHUB_STEP_SUMMARY
+          echo "Deployment to $TARGET environment approved." >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ **Quality Gate: FAILED**" >> $GITHUB_STEP_SUMMARY
+          if [ "$SHOULD_DEPLOY" = "true" ]; then
+            echo "Deployment to $TARGET blocked due to quality/security issues." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No deployment requested." >> $GITHUB_STEP_SUMMARY
+          fi
+        fi
+
+    - name: 📊 Create quality gate status
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const approved = '${{ steps.decision.outputs.approved }}' === 'true';
+          const target = '${{ needs.universal-analysis.outputs.deployment-target }}';
+          const qualityScore = ${{ needs.universal-analysis.outputs.quality-score }};
+          
+          await github.rest.repos.createCommitStatus({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            sha: context.sha,
+            state: approved ? 'success' : 'failure',
+            target_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            description: `Quality: ${qualityScore}/100 | Target: ${target}`,
+            context: 'AI Quality Gate'
+          });
+
+  # 🚀 Trigger Environment-Specific Deployment
+  trigger-deployment:
+    name: 🚀 Trigger Deployment
+    runs-on: ubuntu-latest
+    needs: [universal-analysis, quality-gate]
+    if: needs.quality-gate.outputs.deploy-approved == 'true'
+    
+    steps:
+    - name: 🎯 Trigger environment-specific workflow
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const target = '${{ needs.quality-gate.outputs.deployment-target }}';
+          
+          let workflowFile = '';
+          if (target === 'development') {
+            workflowFile = 'deploy-development.yml';
+          } else if (target === 'staging') {
+            workflowFile = 'deploy-staging.yml';
+          } else if (target === 'production') {
+            workflowFile = 'deploy-production.yml';
+          }
+          
+          if (workflowFile) {
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: workflowFile,
+              ref: context.ref,
+              inputs: {
+                'triggered-by': 'ai-universal-review',
+                'quality-score': '${{ needs.universal-analysis.outputs.quality-score }}',
+                'security-score': '${{ needs.universal-analysis.outputs.security-score }}'
+              }
+            });
+            
+            console.log(`Triggered ${workflowFile} for ${target} deployment`);
+          }
