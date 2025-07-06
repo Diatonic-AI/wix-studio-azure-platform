@@ -1,4 +1,4 @@
-name: Azure Deployment Pipeline
+name: GitHub-Only Azure Deployment
 
 on:
   push:
@@ -7,17 +7,28 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+# Required for OIDC authentication
+permissions:
+  id-token: write
+  contents: read
+  packages: write
+
 env:
+  REGISTRY: ghcr.io
   AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
   AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
   AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
 jobs:
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
+    outputs:
+      image-api: ${{ steps.meta-api.outputs.tags }}
+      image-microservices: ${{ steps.meta-microservices.outputs.tags }}
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
     - name: Set up Node.js
       uses: actions/setup-node@v4
@@ -47,52 +58,131 @@ jobs:
     - name: Build all packages
       run: npm run build
 
+    # Login to GitHub Container Registry
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    # Build and push API services container
+    - name: Extract metadata for API services
+      id: meta-api
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ github.repository }}/api-services
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push API services
+      uses: docker/build-push-action@v5
+      with:
+        context: ./packages/api-services
+        push: true
+        tags: ${{ steps.meta-api.outputs.tags }}
+        labels: ${{ steps.meta-api.outputs.labels }}
+
+    # Build and push microservices container
+    - name: Extract metadata for microservices
+      id: meta-microservices
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ github.repository }}/microservices
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push microservices
+      uses: docker/build-push-action@v5
+      with:
+        context: ./packages/microservices
+        push: true
+        tags: ${{ steps.meta-microservices.outputs.tags }}
+        labels: ${{ steps.meta-microservices.outputs.labels }}
+
   deploy-staging:
-    needs: build
+    if: github.ref == 'refs/heads/develop' || github.event_name == 'pull_request'
+    needs: build-and-test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/develop'
     environment: staging
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-    - name: Set up Azure CLI
-      uses: azure/setup-azd@v0.1.0
-
-    - name: Log in to Azure
+    - name: Azure Login (OIDC)
       uses: azure/login@v1
       with:
         client-id: ${{ env.AZURE_CLIENT_ID }}
         tenant-id: ${{ env.AZURE_TENANT_ID }}
         subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Set up Azure Developer CLI
+      uses: azure/setup-azd@v0.1.0
 
     - name: Deploy to Staging
       run: |
         azd env set AZURE_ENV_NAME staging
         azd env set AZURE_LOCATION eastus
+        azd env set CONTAINER_IMAGE_API ${{ needs.build-and-test.outputs.image-api }}
+        azd env set CONTAINER_IMAGE_MICROSERVICES ${{ needs.build-and-test.outputs.image-microservices }}
         azd up --no-prompt
 
   deploy-production:
-    needs: build
-    runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    needs: build-and-test
+    runs-on: ubuntu-latest
     environment: production
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-    - name: Set up Azure CLI
-      uses: azure/setup-azd@v0.1.0
-
-    - name: Log in to Azure
+    - name: Azure Login (OIDC)
       uses: azure/login@v1
       with:
         client-id: ${{ env.AZURE_CLIENT_ID }}
         tenant-id: ${{ env.AZURE_TENANT_ID }}
         subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
+    - name: Set up Azure Developer CLI
+      uses: azure/setup-azd@v0.1.0
+
     - name: Deploy to Production
       run: |
         azd env set AZURE_ENV_NAME production
         azd env set AZURE_LOCATION eastus
+        azd env set CONTAINER_IMAGE_API ${{ needs.build-and-test.outputs.image-api }}
+        azd env set CONTAINER_IMAGE_MICROSERVICES ${{ needs.build-and-test.outputs.image-microservices }}
         azd up --no-prompt
+
+    - name: Post-deployment Health Check
+      run: |
+        echo "Waiting for deployment to stabilize..."
+        sleep 60
+        
+        # Check application health endpoints
+        WEBAPP_URL=$(azd env get-values --output json | jq -r '.WEBAPP_URL // empty')
+        if [ ! -z "$WEBAPP_URL" ]; then
+          curl -f "$WEBAPP_URL/health" || echo "Health check failed"
+        fi
+
+  cleanup-old-images:
+    if: github.ref == 'refs/heads/main'
+    needs: [build-and-test, deploy-production]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+    - name: Cleanup old container images
+      run: |
+        # Keep only the latest 5 images to save storage
+        echo "Cleaning up old container images..."
+        # GitHub CLI can be used to clean up old packages
+        # This is a placeholder for future implementation

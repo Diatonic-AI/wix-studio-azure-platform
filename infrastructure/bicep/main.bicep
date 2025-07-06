@@ -132,6 +132,13 @@ resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2023-05-01'
   }
 }
 
+@description('GitHub container registry image for microservices')
+param microservicesImage string = 'ghcr.io/diatonic-ai/wix-studio-azure-platform/microservices:latest'
+
+@description('GitHub Personal Access Token for container registry access')
+@secure()
+param githubToken string = ''
+
 // Container App for Python Microservices
 resource microservicesContainer 'Microsoft.App/containerApps@2023-05-01' = {
   name: '${resourceName}-microservices'
@@ -148,18 +155,25 @@ resource microservicesContainer 'Microsoft.App/containerApps@2023-05-01' = {
           allowedHeaders: ['*']
         }
       }
-      registries: [
+      registries: !empty(githubToken) ? [
         {
-          identity: managedIdentity.id
-          server: containerRegistry.properties.loginServer
+          server: 'ghcr.io'
+          username: 'diatonic-ai'
+          passwordSecretRef: 'github-registry-password'
         }
-      ]
+      ] : []
+      secrets: !empty(githubToken) ? [
+        {
+          name: 'github-registry-password'
+          value: githubToken
+        }
+      ] : []
     }
     template: {
       containers: [
         {
           name: 'microservices'
-          image: '${containerRegistry.properties.loginServer}/microservices:latest'
+          image: microservicesImage
           resources: {
             cpu: json('0.25')
             memory: '0.5Gi'
@@ -168,6 +182,10 @@ resource microservicesContainer 'Microsoft.App/containerApps@2023-05-01' = {
             {
               name: 'PORT'
               value: '8000'
+            }
+            {
+              name: 'AZURE_CLIENT_ID'
+              value: managedIdentity.properties.clientId
             }
           ]
         }
@@ -190,41 +208,12 @@ resource microservicesContainer 'Microsoft.App/containerApps@2023-05-01' = {
   }
 }
 
-// Container Registry
-resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
-  name: '${replace(resourceName, '-', '')}acr'
-  location: location
-  sku: {
-    name: 'Basic'
-  }
-  properties: {
-    adminUserEnabled: false
-  }
-  tags: {
-    'azd-env-name': environmentName
-  }
-}
-
 // User Assigned Managed Identity
 resource managedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${resourceName}-identity'
   location: location
   tags: {
     'azd-env-name': environmentName
-  }
-}
-
-// Role assignment for Container Registry
-resource acrPullRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(containerRegistry.id, managedIdentity.id, '7f951dda-4ed3-4680-a7ca-43fe172d538d')
-  scope: containerRegistry
-  properties: {
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      '7f951dda-4ed3-4680-a7ca-43fe172d538d'
-    ) // AcrPull
-    principalId: managedIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
   }
 }
 
@@ -355,6 +344,7 @@ output AZURE_RESOURCE_GROUP string = resourceGroup().name
 output WIX_WEBSITES_URL string = 'https://${wixWebsitesApp.properties.defaultHostName}'
 output API_SERVICES_URL string = 'https://${apiServicesApp.properties.defaultHostName}'
 output MICROSERVICES_URL string = 'https://${microservicesContainer.properties.configuration.ingress.fqdn}'
-output CONTAINER_REGISTRY_LOGIN_SERVER string = containerRegistry.properties.loginServer
+output CONTAINER_REGISTRY_SERVER string = 'ghcr.io'
 output KEY_VAULT_NAME string = keyVault.name
 output APPLICATION_INSIGHTS_INSTRUMENTATION_KEY string = applicationInsights.properties.InstrumentationKey
+output MANAGED_IDENTITY_CLIENT_ID string = managedIdentity.properties.clientId

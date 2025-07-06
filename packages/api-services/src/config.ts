@@ -27,7 +27,7 @@ interface AppConfig {
   azure: {
     subscriptionId: string;
     tenantId: string;
-    keyVaultUrl?: string;
+    keyVaultUrl?: string | undefined;
   };
   environment: 'development' | 'staging' | 'production';
 }
