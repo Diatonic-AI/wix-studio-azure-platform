@@ -15,7 +15,8 @@
     "start": "npm run start:web",
     "start:web": "cd packages/wix-websites && npm run start",
     "lint": "eslint . --ext .ts,.tsx,.js,.jsx",
-    "test": "jest",
+    "test": "jest --passWithNoTests",
+    "test:coverage": "jest --passWithNoTests --coverage --coverageReporters=lcov",
     "install:all": "npm install && npm run install:packages",
     "install:packages": "cd packages/wix-websites && npm install && cd ../api-services && npm install && cd ../internal-tools && npm install && cd ../microservices && pip install -r requirements.txt"
   },

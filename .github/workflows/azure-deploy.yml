@@ -106,7 +106,7 @@ jobs:
         labels: ${{ steps.meta-microservices.outputs.labels }}
 
   deploy-staging:
-    if: github.ref == 'refs/heads/develop' || github.event_name == 'pull_request'
+    if: github.ref == 'refs/heads/develop' || github.event_name == 'pull_request' || (github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch')
     needs: build-and-test
     runs-on: ubuntu-latest
     environment: staging
@@ -173,7 +173,7 @@ jobs:
         fi
 
   cleanup-old-images:
-    if: github.ref == 'refs/heads/main'
+    if: always() && github.ref == 'refs/heads/main'
     needs: [build-and-test, deploy-production]
     runs-on: ubuntu-latest
     continue-on-error: true
