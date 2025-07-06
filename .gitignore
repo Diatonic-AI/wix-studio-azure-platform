@@ -38,6 +38,10 @@ app-settings.json
 .token
 .secret
 
+# Allow setup scripts (these don't contain actual secrets)
+!scripts/setup-*
+!scripts/*-setup*
+
 # SSL/TLS certificates and keys
 *.pem
 *.key
