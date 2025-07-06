@@ -1,0 +1,23 @@
+# Commit Message Template for Wix Studio Azure Platform
+#
+# Please follow the conventional commit format:
+# <type>[optional scope]: <description>
+#
+# [optional body]
+#
+# [optional footer(s)]
+#
+# Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
+# 
+# Examples:
+# feat(auth): add OIDC authentication for Azure
+# fix(docker): resolve npm ci issue in api-services build
+# docs: update deployment guide with OIDC setup
+# ci: add environment-specific deployment workflows
+#
+# Use commit flags for deployment:
+# [dev] - triggers development deployment
+# [staging] - triggers staging deployment  
+# [prod] - triggers production deployment
+#
+# This commit will be GPG signed automatically.

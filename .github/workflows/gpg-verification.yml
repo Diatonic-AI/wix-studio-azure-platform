@@ -1,0 +1,259 @@
+name: 🔐 GPG Signature Verification
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  verify-signatures:
+    name: 🔐 Verify GPG Signatures
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: 🔍 Verify all commits are GPG signed
+      run: |
+        echo "🔍 Checking GPG signatures for all commits..."
+        
+        # Get the range of commits to check
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          # For PRs, check commits in the PR
+          COMMIT_RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+        else
+          # For pushes, check the last few commits
+          COMMIT_RANGE="HEAD~5..HEAD"
+        fi
+        
+        echo "Checking commits in range: $COMMIT_RANGE"
+        
+        # Initialize counters
+        TOTAL_COMMITS=0
+        SIGNED_COMMITS=0
+        UNSIGNED_COMMITS=0
+        
+        # Check each commit
+        for commit in $(git rev-list $COMMIT_RANGE); do
+          TOTAL_COMMITS=$((TOTAL_COMMITS + 1))
+          
+          # Get commit info
+          COMMIT_MSG=$(git log --format="%s" -n 1 $commit)
+          AUTHOR=$(git log --format="%an <%ae>" -n 1 $commit)
+          
+          echo ""
+          echo "🔍 Checking commit: $commit"
+          echo "📝 Message: $COMMIT_MSG"
+          echo "👤 Author: $AUTHOR"
+          
+          # Check if commit is GPG signed
+          if git verify-commit $commit 2>/dev/null; then
+            echo "✅ GPG signature verified"
+            SIGNED_COMMITS=$((SIGNED_COMMITS + 1))
+          else
+            echo "❌ No valid GPG signature found"
+            UNSIGNED_COMMITS=$((UNSIGNED_COMMITS + 1))
+            
+            # Store details for summary
+            echo "UNSIGNED_COMMIT_$UNSIGNED_COMMITS=$commit" >> $GITHUB_ENV
+            echo "UNSIGNED_MSG_$UNSIGNED_COMMITS=$COMMIT_MSG" >> $GITHUB_ENV
+            echo "UNSIGNED_AUTHOR_$UNSIGNED_COMMITS=$AUTHOR" >> $GITHUB_ENV
+          fi
+        done
+        
+        echo ""
+        echo "📊 Summary:"
+        echo "Total commits checked: $TOTAL_COMMITS"
+        echo "Signed commits: $SIGNED_COMMITS"
+        echo "Unsigned commits: $UNSIGNED_COMMITS"
+        
+        # Store summary in environment
+        echo "TOTAL_COMMITS=$TOTAL_COMMITS" >> $GITHUB_ENV
+        echo "SIGNED_COMMITS=$SIGNED_COMMITS" >> $GITHUB_ENV
+        echo "UNSIGNED_COMMITS=$UNSIGNED_COMMITS" >> $GITHUB_ENV
+        
+        # Fail if any commits are unsigned
+        if [ $UNSIGNED_COMMITS -gt 0 ]; then
+          echo ""
+          echo "❌ Found $UNSIGNED_COMMITS unsigned commit(s). All commits must be GPG signed."
+          exit 1
+        fi
+        
+        echo ""
+        echo "✅ All commits are properly GPG signed!"
+
+    - name: 📊 Create signature report
+      if: always()
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const totalCommits = process.env.TOTAL_COMMITS || '0';
+          const signedCommits = process.env.SIGNED_COMMITS || '0';
+          const unsignedCommits = process.env.UNSIGNED_COMMITS || '0';
+          
+          let report = `## 🔐 GPG Signature Verification Report
+          
+          **Summary:**
+          - 📊 Total commits checked: ${totalCommits}
+          - ✅ Signed commits: ${signedCommits}
+          - ❌ Unsigned commits: ${unsignedCommits}
+          
+          `;
+          
+          if (parseInt(unsignedCommits) > 0) {
+            report += `### ❌ Unsigned Commits Found\n\n`;
+            
+            for (let i = 1; i <= parseInt(unsignedCommits); i++) {
+              const commit = process.env[`UNSIGNED_COMMIT_${i}`];
+              const message = process.env[`UNSIGNED_MSG_${i}`];
+              const author = process.env[`UNSIGNED_AUTHOR_${i}`];
+              
+              report += `**Commit ${i}:**\n`;
+              report += `- SHA: \`${commit}\`\n`;
+              report += `- Message: ${message}\n`;
+              report += `- Author: ${author}\n\n`;
+            }
+            
+            report += `### 🔧 How to Fix\n\n`;
+            report += `1. Set up GPG signing:\n`;
+            report += `\`\`\`bash\n`;
+            report += `git config user.name "iamdrewfortini"\n`;
+            report += `git config user.email "admin@diatonic.online"\n`;
+            report += `git config user.signingkey YOUR_GPG_KEY_ID\n`;
+            report += `git config commit.gpgsign true\n`;
+            report += `\`\`\`\n\n`;
+            report += `2. Re-sign the commits:\n`;
+            report += `\`\`\`bash\n`;
+            report += `git rebase --exec 'git commit --amend --no-edit -S' HEAD~${unsignedCommits}\n`;
+            report += `\`\`\`\n\n`;
+          } else {
+            report += `### ✅ All Commits Properly Signed\n\n`;
+            report += `Great work! All commits in this ${context.eventName === 'pull_request' ? 'pull request' : 'push'} are properly GPG signed.\n\n`;
+          }
+          
+          report += `### 📋 GPG Signing Requirements\n\n`;
+          report += `This repository requires all commits to be GPG signed for security and authenticity.\n\n`;
+          report += `**Required Configuration:**\n`;
+          report += `- User: iamdrewfortini\n`;
+          report += `- Email: admin@diatonic.online\n`;
+          report += `- GPG Key: Must be valid and trusted\n`;
+          
+          // For PRs, add as comment
+          if (context.eventName === 'pull_request') {
+            // Check if comment already exists
+            const comments = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            
+            const existingComment = comments.data.find(comment => 
+              comment.user.type === 'Bot' && comment.body.includes('GPG Signature Verification Report')
+            );
+            
+            if (existingComment) {
+              await github.rest.issues.updateComment({
+                comment_id: existingComment.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: report
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: report
+              });
+            }
+          }
+          
+          // Add to step summary
+          core.summary.addRaw(report);
+          await core.summary.write();
+
+    - name: 🚨 Create issue for unsigned commits
+      if: failure() && env.UNSIGNED_COMMITS != '0'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const unsignedCommits = process.env.UNSIGNED_COMMITS || '0';
+          
+          if (parseInt(unsignedCommits) === 0) return;
+          
+          const title = `🔐 Security Alert: ${unsignedCommits} Unsigned Commit(s) Detected`;
+          
+          let body = `## 🚨 Security Alert: Unsigned Commits Detected
+          
+          **Found ${unsignedCommits} unsigned commit(s) that violate our GPG signing policy.**
+          
+          ### 📋 Details
+          
+          `;
+          
+          for (let i = 1; i <= parseInt(unsignedCommits); i++) {
+            const commit = process.env[`UNSIGNED_COMMIT_${i}`];
+            const message = process.env[`UNSIGNED_MSG_${i}`];
+            const author = process.env[`UNSIGNED_AUTHOR_${i}`];
+            
+            body += `**Commit ${i}:**\n`;
+            body += `- SHA: \`${commit}\`\n`;
+            body += `- Message: ${message}\n`;
+            body += `- Author: ${author}\n`;
+            body += `- Branch: ${{ github.ref_name }}\n\n`;
+          }
+          
+          body += `### 🔧 Required Actions
+          
+          1. **Immediate:** Do not merge until all commits are GPG signed
+          2. **Setup GPG signing:**
+             \`\`\`bash
+             git config user.name "iamdrewfortini"
+             git config user.email "admin@diatonic.online"
+             git config user.signingkey YOUR_GPG_KEY_ID
+             git config commit.gpgsign true
+             \`\`\`
+          3. **Re-sign commits:**
+             \`\`\`bash
+             git rebase --exec 'git commit --amend --no-edit -S' HEAD~${unsignedCommits}
+             git push --force-with-lease
+             \`\`\`
+          
+          ### 📋 Security Policy
+          
+          This repository requires all commits to be GPG signed to ensure:
+          - **Authenticity:** Verify the commit author
+          - **Integrity:** Ensure commits haven't been tampered with
+          - **Non-repudiation:** Provide cryptographic proof of authorship
+          
+          **Required Configuration:**
+          - User: iamdrewfortini
+          - Email: admin@diatonic.online
+          - GPG Key: Valid and trusted key
+          
+          ### 🔗 Related
+          
+          - Triggered by: ${{ github.event_name }}
+          - Workflow: ${{ github.workflow }}
+          - Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          `;
+          
+          // Create the issue
+          await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: title,
+            body: body,
+            labels: ['security', 'urgent', 'gpg-signing']
+          });
