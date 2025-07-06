@@ -1,0 +1,232 @@
+# Pre-commit hooks configuration for enhanced security and quality
+# See https://pre-commit.com for more information
+
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-json
+      - id: check-toml
+      - id: check-xml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+      - id: detect-private-key
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+
+  # Secret detection with TruffleHog
+  - repo: https://github.com/trufflesecurity/trufflehog
+    rev: main
+    hooks:
+      - id: trufflehog
+        name: TruffleHog Secret Scan
+        description: Detect hardcoded secrets
+        entry: bash -c 'trufflehog git file://. --since-commit HEAD --only-verified --fail'
+        language: system
+        stages: [commit]
+
+  # GitLeaks for additional secret detection
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: package-lock.json
+
+  # JavaScript/TypeScript linting and formatting
+  - repo: https://github.com/pre-commit/mirrors-eslint
+    rev: v8.54.0
+    hooks:
+      - id: eslint
+        files: \.(js|jsx|ts|tsx)$
+        types: [file]
+        additional_dependencies:
+          - eslint@^8.0.0
+          - '@typescript-eslint/eslint-plugin@^6.0.0'
+          - '@typescript-eslint/parser@^6.0.0'
+          - 'eslint-plugin-security@^1.7.1'
+          - 'eslint-plugin-import@^2.29.0'
+          - 'eslint-plugin-node@^11.1.0'
+          - 'eslint-plugin-promise@^6.1.1'
+
+  # Prettier for code formatting
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.0.3
+    hooks:
+      - id: prettier
+        files: \.(js|jsx|ts|tsx|json|md|yml|yaml)$
+        exclude: |
+          (?x)^(
+              \.github/workflows/.*\.yml|
+              package-lock\.json|
+              yarn\.lock
+          )$
+
+  # Python hooks
+  - repo: https://github.com/psf/black
+    rev: 23.10.1
+    hooks:
+      - id: black
+        language_version: python3.11
+        files: \.py$
+
+  - repo: https://github.com/pycqa/flake8
+    rev: 6.1.0
+    hooks:
+      - id: flake8
+        additional_dependencies:
+          - flake8-bugbear
+          - flake8-security
+          - flake8-bandit
+        args: [--max-line-length=88, --extend-ignore=E203,W503]
+
+  - repo: https://github.com/pycqa/isort
+    rev: 5.12.0
+    hooks:
+      - id: isort
+        args: [--profile, black]
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.7.0
+    hooks:
+      - id: mypy
+        additional_dependencies: [types-requests]
+        args: [--ignore-missing-imports]
+
+  # Security scanning for Python
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.5
+    hooks:
+      - id: bandit
+        args: ['-r', 'packages/microservices/', '-f', 'json', '-o', 'bandit-report.json']
+        files: \.py$
+
+  # Docker file linting
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint-docker
+        args: [--ignore, DL3008, --ignore, DL3009]
+
+  # Infrastructure as Code security
+  - repo: https://github.com/Checkmarx/kics
+    rev: v1.7.13
+    hooks:
+      - id: kics-scan
+        args: [--path, infrastructure/, --output-path, kics-results.json]
+        files: \.(bicep|json|yml|yaml)$
+        pass_filenames: false
+
+  # Markdown linting
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.37.0
+    hooks:
+      - id: markdownlint
+        args: [--fix]
+        exclude: |
+          (?x)^(
+              CHANGELOG\.md|
+              \.github/.*\.md
+          )$
+
+  # Commit message formatting
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v3.12.0
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]
+
+  # License header check
+  - repo: https://github.com/Lucas-C/pre-commit-hooks
+    rev: v1.5.4
+    hooks:
+      - id: insert-license
+        files: \.(js|jsx|ts|tsx|py)$
+        args:
+          - --license-filepath
+          - LICENSE-HEADER.txt
+          - --comment-style
+          - //
+
+  # Security policy validation
+  - repo: local
+    hooks:
+      - id: security-policy-check
+        name: Security Policy Validation
+        entry: bash -c 'if [ -f "SECURITY.md" ]; then echo "✅ Security policy exists"; else echo "❌ Security policy missing" && exit 1; fi'
+        language: system
+        pass_filenames: false
+
+      - id: dependency-check
+        name: Dependency Vulnerability Check
+        entry: bash -c 'npm audit --audit-level=high --production'
+        language: system
+        files: package\.json$
+        pass_filenames: false
+
+      - id: azure-best-practices
+        name: Azure Configuration Check
+        entry: python scripts/azure-config-check.py
+        language: system
+        files: infrastructure/.*\.(bicep|json)$
+        pass_filenames: true
+
+      - id: performance-budget-check
+        name: Performance Budget Validation
+        entry: node scripts/performance-budget-check.js
+        language: system
+        files: package\.json$
+        pass_filenames: false
+
+  # Custom hooks for Wix platform
+  - repo: local
+    hooks:
+      - id: wix-api-key-check
+        name: Wix API Key Security Check
+        entry: bash -c 'grep -r "wix.*api.*key" --include="*.js" --include="*.ts" --include="*.py" . && echo "❌ Potential Wix API key found" && exit 1 || echo "✅ No Wix API keys detected"'
+        language: system
+        pass_filenames: false
+
+      - id: environment-config-check
+        name: Environment Configuration Validation
+        entry: python scripts/env-config-check.py
+        language: system
+        files: \.env\.example$
+        pass_filenames: true
+
+      - id: azure-resource-naming
+        name: Azure Resource Naming Convention
+        entry: python scripts/azure-naming-check.py
+        language: system
+        files: infrastructure/.*\.bicep$
+        pass_filenames: true
+
+# Configuration for specific tools
+default_language_version:
+  python: python3.11
+  node: 18.19.0
+
+default_stages: [commit, push]
+
+# Exclude patterns
+exclude: |
+  (?x)^(
+      \.git/.*|
+      \.vscode/.*|
+      node_modules/.*|
+      \.next/.*|
+      dist/.*|
+      build/.*|
+      coverage/.*|
+      \.nyc_output/.*|
+      __pycache__/.*|
+      \.pytest_cache/.*
+  )$

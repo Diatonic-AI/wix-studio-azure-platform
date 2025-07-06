@@ -1,0 +1,306 @@
+{
+  "performance-budgets": {
+    "api-services": {
+      "bundleSize": 5242880,
+      "dependencies": 100,
+      "devDependencies": 200,
+      "metrics": {
+        "responseTime": {
+          "p50": 500,
+          "p95": 1000,
+          "p99": 2000
+        },
+        "throughput": {
+          "min": 1000
+        },
+        "errorRate": {
+          "max": 0.01
+        },
+        "memoryUsage": {
+          "max": 512
+        },
+        "cpuUsage": {
+          "max": 70
+        }
+      },
+      "allowedDependencies": [
+        "express",
+        "cors",
+        "helmet",
+        "morgan",
+        "compression",
+        "@azure/identity",
+        "@azure/keyvault-secrets",
+        "@azure/storage-blob",
+        "jsonwebtoken",
+        "bcryptjs",
+        "validator",
+        "dotenv"
+      ],
+      "blockedDependencies": [
+        "lodash",
+        "moment",
+        "request",
+        "left-pad"
+      ]
+    },
+    "wix-websites": {
+      "bundleSize": 3145728,
+      "dependencies": 50,
+      "devDependencies": 150,
+      "metrics": {
+        "responseTime": {
+          "p50": 800,
+          "p95": 1500,
+          "p99": 3000
+        },
+        "firstContentfulPaint": {
+          "max": 1500
+        },
+        "largestContentfulPaint": {
+          "max": 2500
+        },
+        "cumulativeLayoutShift": {
+          "max": 0.1
+        },
+        "firstInputDelay": {
+          "max": 100
+        }
+      },
+      "allowedDependencies": [
+        "express",
+        "next",
+        "react",
+        "react-dom",
+        "@wix/sdk",
+        "@wix/api-client",
+        "styled-components",
+        "framer-motion"
+      ],
+      "blockedDependencies": [
+        "jquery",
+        "bootstrap",
+        "moment",
+        "lodash"
+      ]
+    },
+    "internal-tools": {
+      "bundleSize": 10485760,
+      "dependencies": 80,
+      "devDependencies": 200,
+      "metrics": {
+        "responseTime": {
+          "p50": 300,
+          "p95": 800,
+          "p99": 1500
+        },
+        "bundleSize": {
+          "max": 2048
+        },
+        "firstContentfulPaint": {
+          "max": 1000
+        },
+        "largestContentfulPaint": {
+          "max": 2000
+        },
+        "timeToInteractive": {
+          "max": 3000
+        }
+      },
+      "allowedDependencies": [
+        "next",
+        "react",
+        "react-dom",
+        "@radix-ui/react-alert-dialog",
+        "@radix-ui/react-button",
+        "@radix-ui/react-dropdown-menu",
+        "@radix-ui/react-form",
+        "@radix-ui/react-navigation-menu",
+        "@radix-ui/react-progress",
+        "@radix-ui/react-select",
+        "@radix-ui/react-table",
+        "@radix-ui/react-tabs",
+        "@radix-ui/react-tooltip",
+        "tailwindcss",
+        "clsx",
+        "class-variance-authority",
+        "lucide-react",
+        "recharts",
+        "date-fns",
+        "react-hook-form",
+        "@hookform/resolvers",
+        "zod",
+        "sonner",
+        "react-hot-toast"
+      ],
+      "blockedDependencies": [
+        "moment",
+        "lodash",
+        "jquery",
+        "bootstrap",
+        "material-ui",
+        "antd"
+      ]
+    },
+    "microservices": {
+      "dependencies": 30,
+      "imageSize": 524288000,
+      "metrics": {
+        "responseTime": {
+          "p50": 200,
+          "p95": 500,
+          "p99": 1000
+        },
+        "memoryUsage": {
+          "max": 256
+        },
+        "cpuUsage": {
+          "max": 50
+        },
+        "startupTime": {
+          "max": 10
+        }
+      },
+      "allowedDependencies": [
+        "fastapi",
+        "uvicorn",
+        "pydantic",
+        "httpx",
+        "python-multipart",
+        "python-dotenv",
+        "azure-identity",
+        "azure-keyvault-secrets",
+        "azure-storage-blob",
+        "azure-cosmos",
+        "sqlalchemy",
+        "asyncpg",
+        "redis",
+        "celery",
+        "structlog",
+        "prometheus-client"
+      ],
+      "blockedDependencies": [
+        "requests",
+        "urllib3",
+        "beautifulsoup4",
+        "scrapy",
+        "django",
+        "flask"
+      ]
+    }
+  },
+  "global": {
+    "maxDependencyAge": 365,
+    "securityVulnerabilities": {
+      "critical": 0,
+      "high": 0,
+      "medium": 5,
+      "low": 20
+    },
+    "licenseWhitelist": [
+      "MIT",
+      "Apache-2.0",
+      "BSD-2-Clause",
+      "BSD-3-Clause",
+      "ISC",
+      "0BSD",
+      "Unlicense",
+      "CC0-1.0"
+    ],
+    "licenseBlacklist": [
+      "GPL-2.0",
+      "GPL-3.0",
+      "LGPL-2.1",
+      "LGPL-3.0",
+      "AGPL-1.0",
+      "AGPL-3.0",
+      "CDDL-1.0",
+      "CDDL-1.1",
+      "EPL-1.0",
+      "EPL-2.0",
+      "EUPL-1.1",
+      "EUPL-1.2"
+    ]
+  },
+  "environments": {
+    "development": {
+      "relaxedLimits": true,
+      "multiplier": 1.5
+    },
+    "staging": {
+      "relaxedLimits": false,
+      "multiplier": 1.2
+    },
+    "production": {
+      "relaxedLimits": false,
+      "multiplier": 1.0,
+      "strictMode": true
+    }
+  },
+  "alerts": {
+    "budgetExceeded": {
+      "slack": {
+        "enabled": true,
+        "channel": "#performance-alerts",
+        "severity": "warning"
+      },
+      "email": {
+        "enabled": false,
+        "recipients": []
+      }
+    },
+    "securityVulnerability": {
+      "slack": {
+        "enabled": true,
+        "channel": "#security-alerts",
+        "severity": "error"
+      },
+      "email": {
+        "enabled": true,
+        "recipients": ["security-team@company.com"]
+      }
+    }
+  },
+  "monitoring": {
+    "performance": {
+      "enabled": true,
+      "interval": "1h",
+      "retention": "30d"
+    },
+    "dependencies": {
+      "enabled": true,
+      "interval": "24h",
+      "retention": "90d"
+    },
+    "security": {
+      "enabled": true,
+      "interval": "6h",
+      "retention": "365d"
+    }
+  },
+  "automation": {
+    "dependencyUpdates": {
+      "enabled": true,
+      "schedule": "weekly",
+      "autoMerge": {
+        "patch": true,
+        "minor": false,
+        "major": false
+      }
+    },
+    "performanceRegression": {
+      "enabled": true,
+      "threshold": 0.15,
+      "action": "alert"
+    },
+    "securityPatching": {
+      "enabled": true,
+      "autoMerge": {
+        "critical": true,
+        "high": true,
+        "medium": false,
+        "low": false
+      }
+    }
+  }
+}

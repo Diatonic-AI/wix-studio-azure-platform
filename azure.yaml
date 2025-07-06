@@ -1,0 +1,62 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: wix-studio-agency
+metadata:
+  template: wix-studio-agency@0.0.1-beta
+
+services:
+  wix-websites:
+    project: ./packages/wix-websites
+    language: js
+    host: appservice
+    hooks:
+      prebuild:
+        shell: pwsh
+        run: |
+          Write-Host "Building Wix Websites service..."
+          npm install
+          npm run build
+        continueOnError: false
+
+  api-services:
+    project: ./packages/api-services
+    language: js
+    host: appservice
+    hooks:
+      prebuild:
+        shell: pwsh
+        run: |
+          Write-Host "Building API Services..."
+          npm install
+          npm run build
+        continueOnError: false
+
+  microservices:
+    project: ./packages/microservices
+    language: py
+    host: containerapp
+    docker:
+      path: ./Dockerfile
+    hooks:
+      prebuild:
+        shell: pwsh
+        run: |
+          Write-Host "Preparing Python microservices..."
+          pip install -r requirements.txt
+        continueOnError: false
+
+hooks:
+  preprovision:
+    shell: pwsh
+    run: |
+      Write-Host "Preparing Azure infrastructure..."
+      Write-Host "Environment: $env:AZURE_ENV_NAME"
+      Write-Host "Location: $env:AZURE_LOCATION"
+    continueOnError: false
+
+  postprovision:
+    shell: pwsh
+    run: |
+      Write-Host "Setting up Key Vault secrets..."
+      # Add any post-provision setup here
+    continueOnError: false

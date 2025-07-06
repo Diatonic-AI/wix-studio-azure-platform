@@ -1,0 +1,455 @@
+name: 🤖 AI-Powered CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop, staging ]
+  pull_request:
+    branches: [ main, develop ]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+
+env:
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.11'
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 🔍 Code Quality & Security Analysis
+  code-analysis:
+    name: 🔍 Code Analysis & Security
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+      checks: write
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: 🔧 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: 📦 Install dependencies
+      run: |
+        npm ci
+        npm run install:packages
+
+    - name: 🧹 ESLint Analysis
+      run: |
+        npm run lint -- --format @microsoft/eslint-formatter-sarif --output-file eslint-results.sarif
+      continue-on-error: true
+
+    - name: 📊 Upload ESLint results to GitHub
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: eslint-results.sarif
+        wait-for-processing: true
+
+    - name: 🔒 Run CodeQL Analysis
+      uses: github/codeql-action/init@v3
+      with:
+        languages: javascript, python
+        queries: security-extended,security-and-quality
+
+    - name: 🏗️ Build for CodeQL
+      run: |
+        npm run build
+
+    - name: 🔍 Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+      with:
+        category: "/language:javascript"
+
+    - name: 🛡️ Run Snyk Security Scan
+      uses: snyk/actions/node@master
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      with:
+        args: --severity-threshold=high --file=package.json
+
+    - name: 🛡️ Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: 📊 Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+    - name: 🔐 Azure Key Vault Secret Scanner
+      run: |
+        # Scan for potential secrets in code
+        python -m pip install detect-secrets
+        detect-secrets scan --all-files --force-use-all-plugins --baseline .secrets.baseline
+
+    - name: 📝 Generate Security Report
+      run: |
+        echo "# 🛡️ Security Analysis Report" > security-report.md
+        echo "Generated on: $(date)" >> security-report.md
+        echo "" >> security-report.md
+        echo "## 🔍 Scans Performed:" >> security-report.md
+        echo "- ✅ ESLint Security Rules" >> security-report.md
+        echo "- ✅ CodeQL Analysis" >> security-report.md
+        echo "- ✅ Snyk Vulnerability Scan" >> security-report.md
+        echo "- ✅ Trivy Security Scanner" >> security-report.md
+        echo "- ✅ Secret Detection" >> security-report.md
+
+    - name: 💬 Comment Security Report on PR
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const report = fs.readFileSync('security-report.md', 'utf8');
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: report
+          });
+
+  # 🤖 AI Code Review
+  ai-code-review:
+    name: 🤖 AI Code Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: 🤖 OpenAI Code Review
+      uses: freeedcom/ai-codereviewer@main
+      with:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        OPENAI_API_MODEL: "gpt-4"
+        exclude: "*.md,*.json,*.yml,*.yaml,dist/**,node_modules/**,*.lock"
+
+    - name: 🧠 CodeRabbit AI Review
+      uses: coderabbitai/ai-pr-reviewer@latest
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      with:
+        debug: false
+        review_simple_changes: false
+        review_comment_lgtm: false
+
+  # 🧪 Test Suite
+  test:
+    name: 🧪 Test Suite
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20]
+        python-version: ['3.11', '3.12']
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: 🐍 Setup Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: 📦 Install dependencies
+      run: |
+        npm ci
+        npm run install:packages
+
+    - name: 🧪 Run JavaScript Tests
+      run: |
+        npm test -- --coverage --coverageReporters=lcov
+      env:
+        CI: true
+
+    - name: 🐍 Run Python Tests
+      run: |
+        cd packages/microservices
+        python -m pytest --cov=. --cov-report=xml --cov-report=html
+
+    - name: 📊 Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        files: ./coverage/lcov.info,./packages/microservices/coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+    - name: 🔍 SonarCloud Scan
+      uses: SonarSource/sonarcloud-github-action@master
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  # 🏗️ Build & Package
+  build:
+    name: 🏗️ Build & Package
+    runs-on: ubuntu-latest
+    needs: [code-analysis, test]
+    if: always() && (needs.test.result == 'success')
+
+    outputs:
+      image-tags: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: 📦 Install dependencies
+      run: |
+        npm ci
+        npm run install:packages
+
+    - name: 🏗️ Build applications
+      run: |
+        npm run build
+        echo "Build completed successfully" >> $GITHUB_STEP_SUMMARY
+
+    - name: 🐳 Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: 🔐 Log in to Azure Container Registry
+      uses: azure/docker-login@v1
+      with:
+        login-server: ${{ secrets.AZURE_CONTAINER_REGISTRY }}
+        username: ${{ secrets.AZURE_CONTAINER_REGISTRY_USERNAME }}
+        password: ${{ secrets.AZURE_CONTAINER_REGISTRY_PASSWORD }}
+
+    - name: 🏷️ Extract metadata for Docker
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ secrets.AZURE_CONTAINER_REGISTRY }}/wix-agency
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: 🏗️ Build and push Docker image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: ./packages/microservices
+        file: ./packages/microservices/Dockerfile
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: 📦 Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-artifacts-${{ github.sha }}
+        path: |
+          packages/*/dist/
+          packages/microservices/
+          !packages/microservices/node_modules/
+        retention-days: 30
+
+  # 🚀 Deploy to Staging
+  deploy-staging:
+    name: 🚀 Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    environment: 
+      name: staging
+      url: https://wix-agency-staging.azurewebsites.net
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔐 Azure Login
+      uses: azure/login@v1
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: 📦 Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: build-artifacts-${{ github.sha }}
+
+    - name: 🚀 Deploy to Azure with AZD
+      run: |
+        curl -fsSL https://aka.ms/install-azd.sh | bash
+        azd auth login --client-id ${{ secrets.AZURE_CLIENT_ID }} --client-secret ${{ secrets.AZURE_CLIENT_SECRET }} --tenant-id ${{ secrets.AZURE_TENANT_ID }}
+        azd env set AZURE_ENV_NAME staging
+        azd env set AZURE_LOCATION eastus
+        azd deploy --no-prompt
+      env:
+        AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+    - name: 🧪 Run Staging Health Checks
+      run: |
+        # Wait for deployment to be ready
+        sleep 60
+        
+        # Check health endpoints
+        curl -f https://wix-agency-staging.azurewebsites.net/health || exit 1
+        curl -f https://wix-agency-api-staging.azurewebsites.net/health || exit 1
+        
+        echo "✅ Staging deployment health checks passed" >> $GITHUB_STEP_SUMMARY
+
+    - name: 🔍 Run E2E Tests on Staging
+      run: |
+        # Add your E2E test commands here
+        echo "Running E2E tests on staging environment..."
+        # npx playwright test --config=e2e.config.js
+
+  # 🚀 Deploy to Production
+  deploy-production:
+    name: 🚀 Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: 
+      name: production
+      url: https://wix-agency.azurewebsites.net
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔐 Azure Login
+      uses: azure/login@v1
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: 📦 Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: build-artifacts-${{ github.sha }}
+
+    - name: 🚀 Deploy to Azure with AZD
+      run: |
+        curl -fsSL https://aka.ms/install-azd.sh | bash
+        azd auth login --client-id ${{ secrets.AZURE_CLIENT_ID }} --client-secret ${{ secrets.AZURE_CLIENT_SECRET }} --tenant-id ${{ secrets.AZURE_TENANT_ID }}
+        azd env set AZURE_ENV_NAME production
+        azd env set AZURE_LOCATION eastus
+        azd deploy --no-prompt
+      env:
+        AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+    - name: 🧪 Run Production Health Checks
+      run: |
+        # Wait for deployment to be ready
+        sleep 60
+        
+        # Check health endpoints
+        curl -f https://wix-agency.azurewebsites.net/health || exit 1
+        curl -f https://wix-agency-api.azurewebsites.net/health || exit 1
+        
+        echo "✅ Production deployment health checks passed" >> $GITHUB_STEP_SUMMARY
+
+    - name: 📊 Create Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ github.run_number }}
+        release_name: Release v${{ github.run_number }}
+        body: |
+          🚀 **Automated Release v${{ github.run_number }}**
+          
+          **Changes in this release:**
+          ${{ github.event.head_commit.message }}
+          
+          **Deployed to:**
+          - 🌐 Website: https://wix-agency.azurewebsites.net
+          - 🔌 API: https://wix-agency-api.azurewebsites.net
+          - 🐍 Microservices: https://wix-agency-microservices.azurewebsites.net
+          
+          **Docker Image:**
+          `${{ needs.build.outputs.image-tags }}`
+        draft: false
+        prerelease: false
+
+  # 📊 Post-Deployment Monitoring
+  monitoring:
+    name: 📊 Post-Deployment Monitoring
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: always() && needs.deploy-production.result == 'success'
+
+    steps:
+    - name: 🔍 Application Insights Health Check
+      run: |
+        echo "Setting up Application Insights monitoring..."
+        # Add Application Insights queries here
+
+    - name: 📈 Performance Testing
+      run: |
+        echo "Running performance tests..."
+        # Add performance testing commands here
+        # npx artillery run performance-test.yml
+
+    - name: 🚨 Setup Alerts
+      run: |
+        echo "Configuring monitoring alerts..."
+        # Configure Azure Monitor alerts via CLI

@@ -1,0 +1,72 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Install All Dependencies",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"install:all"
+			],
+			"group": "build",
+			"problemMatcher": [
+				"$tsc"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Start All Services",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"dev"
+			],
+			"group": "build",
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Build All Packages",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"build"
+			],
+			"group": "build",
+			"problemMatcher": [
+				"$tsc"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Deploy to Azure (Development)",
+			"type": "shell",
+			"command": "azd",
+			"args": [
+				"up"
+			],
+			"group": "build",
+			"isBackground": false,
+			"options": {
+				"env": {
+					"AZURE_ENV_NAME": "dev",
+					"AZURE_LOCATION": "eastus"
+				}
+			}
+		},
+		{
+			"label": "Azure Login",
+			"type": "shell",
+			"command": "azd",
+			"args": [
+				"auth",
+				"login"
+			],
+			"group": "build",
+			"isBackground": false
+		}
+	]
+}
