@@ -7,8 +7,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY tsconfig.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install all dependencies (including dev dependencies for build)
+RUN npm install
 
 # Copy source code
 COPY src/ ./src/
@@ -23,8 +23,8 @@ WORKDIR /app
 
 # Install dumb-init and create non-root user
 RUN apk add --no-cache dumb-init && \
-    addgroup -g 1001 -S nodejs && \
-    adduser -S nodeapi -u 1001
+  addgroup -g 1001 -S nodejs && \
+  adduser -S nodeapi -u 1001
 
 # Copy built application from builder stage
 COPY --from=builder --chown=nodeapi:nodejs /app/dist ./dist
