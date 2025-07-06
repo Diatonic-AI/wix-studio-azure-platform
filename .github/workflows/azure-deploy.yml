@@ -165,7 +165,7 @@ jobs:
       run: |
         echo "Waiting for deployment to stabilize..."
         sleep 60
-        
+
         # Check application health endpoints
         WEBAPP_URL=$(azd env get-values --output json | jq -r '.WEBAPP_URL // empty')
         if [ ! -z "$WEBAPP_URL" ]; then
