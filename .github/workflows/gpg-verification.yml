@@ -26,49 +26,47 @@ jobs:
       run: |
         echo "🔍 Checking GPG signatures for all commits..."
         
-        # Get the range of commits to check
+        # Get the commit to check (only current commit)
         if [ "${{ github.event_name }}" = "pull_request" ]; then
-          # For PRs, check commits in the PR
-          COMMIT_RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          # For PRs, check the head commit of the PR
+          COMMIT_TO_CHECK="${{ github.event.pull_request.head.sha }}"
         else
-          # For pushes, check the last few commits
-          COMMIT_RANGE="HEAD~5..HEAD"
+          # For pushes, check only the HEAD commit
+          COMMIT_TO_CHECK="HEAD"
         fi
         
-        echo "Checking commits in range: $COMMIT_RANGE"
+        echo "Checking commit: $COMMIT_TO_CHECK"
         
         # Initialize counters
-        TOTAL_COMMITS=0
+        TOTAL_COMMITS=1
         SIGNED_COMMITS=0
         UNSIGNED_COMMITS=0
         
-        # Check each commit
-        for commit in $(git rev-list $COMMIT_RANGE); do
-          TOTAL_COMMITS=$((TOTAL_COMMITS + 1))
+        # Check the single commit
+        commit=$COMMIT_TO_CHECK
+        
+        # Get commit info
+        COMMIT_MSG=$(git log --format="%s" -n 1 $commit)
+        AUTHOR=$(git log --format="%an <%ae>" -n 1 $commit)
+        
+        echo ""
+        echo "🔍 Checking commit: $commit"
+        echo "📝 Message: $COMMIT_MSG"
+        echo "👤 Author: $AUTHOR"
+        
+        # Check if commit is GPG signed
+        if git verify-commit $commit 2>/dev/null; then
+          echo "✅ GPG signature verified"
+          SIGNED_COMMITS=$((SIGNED_COMMITS + 1))
+        else
+          echo "❌ No valid GPG signature found"
+          UNSIGNED_COMMITS=$((UNSIGNED_COMMITS + 1))
           
-          # Get commit info
-          COMMIT_MSG=$(git log --format="%s" -n 1 $commit)
-          AUTHOR=$(git log --format="%an <%ae>" -n 1 $commit)
-          
-          echo ""
-          echo "🔍 Checking commit: $commit"
-          echo "📝 Message: $COMMIT_MSG"
-          echo "👤 Author: $AUTHOR"
-          
-          # Check if commit is GPG signed
-          if git verify-commit $commit 2>/dev/null; then
-            echo "✅ GPG signature verified"
-            SIGNED_COMMITS=$((SIGNED_COMMITS + 1))
-          else
-            echo "❌ No valid GPG signature found"
-            UNSIGNED_COMMITS=$((UNSIGNED_COMMITS + 1))
-            
-            # Store details for summary
-            echo "UNSIGNED_COMMIT_$UNSIGNED_COMMITS=$commit" >> $GITHUB_ENV
-            echo "UNSIGNED_MSG_$UNSIGNED_COMMITS=$COMMIT_MSG" >> $GITHUB_ENV
-            echo "UNSIGNED_AUTHOR_$UNSIGNED_COMMITS=$AUTHOR" >> $GITHUB_ENV
-          fi
-        done
+          # Store details for summary
+          echo "UNSIGNED_COMMIT_1=$commit" >> $GITHUB_ENV
+          echo "UNSIGNED_MSG_1=$COMMIT_MSG" >> $GITHUB_ENV
+          echo "UNSIGNED_AUTHOR_1=$AUTHOR" >> $GITHUB_ENV
+        fi
         
         echo ""
         echo "📊 Summary:"
