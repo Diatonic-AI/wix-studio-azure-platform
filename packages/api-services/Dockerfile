@@ -28,7 +28,7 @@ RUN apk add --no-cache dumb-init && \
 
 # Copy package files and install only production dependencies
 COPY package*.json ./
-RUN npm ci --only=production && npm cache clean --force
+RUN npm install --omit=dev && npm cache clean --force
 
 # Copy built application from builder stage
 COPY --from=builder --chown=nodeapi:nodejs /app/dist ./dist
