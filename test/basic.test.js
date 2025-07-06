@@ -8,13 +8,13 @@ describe('Root project health', () => {
   });
 
   test('should have package.json', () => {
-    const packageJson = require('./package.json');
+    const packageJson = require('../package.json');
     expect(packageJson.name).toBe('wix-studio-agency');
     expect(packageJson.version).toBeTruthy();
   });
 
   test('should have workspace configuration', () => {
-    const packageJson = require('./package.json');
+    const packageJson = require('../package.json');
     expect(packageJson.workspaces).toContain('packages/*');
   });
 });
